@@ -141,11 +141,11 @@ static int baudrates[] = {
 static speed_t baud_bits[] = {
 	0, B9600, B19200, B38400, B57600, B115200, B230400, B460800 };
 
-int dump(char *buffer, int lenth)
+int dump(char *buffer, int length)
 {
 	int i;
-	for (i = 0; i < lenth; i++) {
-		printf("0x%0x2 ", buffer[i]);
+	for (i = 0; i < length; i++) {
+		printf("0x%02x ", (unsigned char)buffer[i]);
 	}
 
 	return 0;
@@ -232,15 +232,14 @@ int write_frame(int channel, const char *input, int count, unsigned char type)
 		prefix_length = 5;
 		prefix[3] = ((127 & count) << 1);
 		prefix[4] = (32640 & count) >> 7;
-	}
-	else
-	{
+	} else {
 		prefix[3] = 1 | (count << 1);
 	}
 	// CRC checksum
 	postfix[0] = make_fcs(prefix + 1, prefix_length - 1);
 
 	c = write(serial_fd, prefix, prefix_length);
+	dump((char *)prefix, prefix_length);
 	if (c != prefix_length)
 	{
 		if(_debug)
@@ -250,6 +249,7 @@ int write_frame(int channel, const char *input, int count, unsigned char type)
 	if (count > 0)
 	{
 		c = write(serial_fd, input, count);
+		dump((char *)input, count);
 		if (count != c)
 		{
 			if(_debug)
@@ -258,6 +258,7 @@ int write_frame(int channel, const char *input, int count, unsigned char type)
 		}
 	}
 	c = write(serial_fd, postfix, 2);
+	dump((char *)postfix, 2);
 	if (c != 2)
 	{
 		if(_debug)
@@ -665,6 +666,11 @@ int open_serialport(char *dev)
 	if(_debug)
 		syslog(LOG_DEBUG, "is in %s\n" , __FUNCTION__);
 	fd = open(dev, O_RDWR | O_NOCTTY | O_NDELAY);
+	
+	if (fd <= 0) {
+		printf("COM open error: %d\n", fd);
+	}
+
 	if (fd != -1)
 	{
 		int index = indexOfBaud(baudrate);
@@ -1384,22 +1390,31 @@ int openDevicesAndMuxMode() {
 	syslog(LOG_INFO, "Waiting for mux-mode.\n");
 	sleep(1);
 	syslog(LOG_INFO, "Opening control channel.\n");
+	printf("\nwrite SABM frame: ");
 	write_frame(0, NULL, 0, SABM | PF);
-
+#define dc 1
+#if dc
 	/*when write SABM to SM, read the buffer from the SM*/
 	char *read_buffer = malloc(2048);
 	int length = read(serial_fd, read_buffer, 2048);
-	printf("\nreceive: ");
+	printf("\nech0 receive: ");
 	dump(read_buffer, length);
 	printf("\n");
-
-	syslog(LOG_INFO, "Opening logical channels.\n");
-	for (i = 1; i <= numOfPorts; i++)
-	{
+#endif
+	for (i = 1; i <= numOfPorts; i++) {
+		syslog(LOG_INFO, "Opening logical channels.\n");
 		sleep(1);
+		printf("\nwrite SABM frame: ");
 		write_frame(i, NULL, 0, SABM | PF);
+#if dc 
+		length = read(serial_fd, read_buffer, 2048);
+		printf("\nreceive UA frame: ");
+		dump(read_buffer, length);
+		printf("\n");
+#endif
 		syslog(LOG_INFO, "Connecting %s to virtual channel %d on %s\n", ptsname(ussp_fd[i-1]), i, serportdev);
 	}
+
 	return ret;
 }
 
@@ -1451,7 +1466,9 @@ int main(int argc, char *argv[], char *env[])
 	}
 	_modem_type = GENERIC;
 
-	serportdev="/dev/modem";
+        _debug = 1;
+	serportdev="/dev/ttyUSB0";
+	baudrate = 115200;
 
 	while((opt=getopt(argc,argv,"p:f:h?dwrm:b:P:s:"))>0) {
 		switch(opt) {
