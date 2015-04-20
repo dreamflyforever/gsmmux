@@ -150,69 +150,13 @@ int dump(char *buffer, int length)
 
 	return 0;
 }
-
-#if 0
-/* Opens USSP port for use.
- *
- * PARAMS:
- * port - port number
- * RETURNS
- * file descriptor or -1 on error
- */
-int ussp_open(int port)
-{
-	int fd;
-	char name[] = "ser0\0";
-
-	name[3] = (char) (0x30 + port);
-	PDEBUG("Open serial port %s ", name);
-	fd = open(name, O_RDWR | O_NONBLOCK);
-	PDEBUG("done.\n");
-
-	return fd;
-}
-#endif
-
-/**
- * Returns success, when an ussp is opened.
- */
-int ussp_connected(int port)
-{
-#if 0
-	struct ussp_operation op;
-
-	op.op = USSP_OPEN_RESULT;
-	if (cstatus[port + 1].opened)
-		op.arg = 0;
-	else
-		op.arg = -1;
-	op.len = 0;
-	write(ussp_fd[port], &op, sizeof(op));
-
-	PDEBUG("USSP port %d opened.\n", port);
-	return 0;
-#else
-	return 0;
-#endif
-}
-
-/** Writes a frame to a logical channel. C/R bit is set to 1.
- * Doesn't support FCS counting for UI frames.
- *
- * PARAMS:
- * channel - channel number (0 = control)
-
- * input   - the data to be written
- * count   - the length of the data
- * type    - the type of the frame (with possible P/F-bit)
- *
- * RETURNS:
- * number of characters written
- */
-int write_frame(int channel, const char *input, int count, unsigned char type)
+int write_frame_copy(int channel, const char *input, int count, unsigned char type, int arg)
 {
 	// flag, EA=1 C channel, frame type, length 1-2
 	unsigned char prefix[5] = { F_FLAG, EA | CR, 0, 0, 0 };
+	if (arg == 0) {
+		prefix[1] = EA;	
+	}
 	unsigned char postfix[2] = { 0xFF, F_FLAG };
 	int prefix_length = 4, c;
 
@@ -267,6 +211,155 @@ int write_frame(int channel, const char *input, int count, unsigned char type)
 	}
 
 	return count;
+}
+
+
+#if 0
+/* Opens USSP port for use.
+ *
+ * PARAMS:
+ * port - port number
+ * RETURNS
+ * file descriptor or -1 on error
+ */
+int ussp_open(int port)
+{
+	int fd;
+	char name[] = "ser0\0";
+
+	name[3] = (char) (0x30 + port);
+	PDEBUG("Open serial port %s ", name);
+	fd = open(name, O_RDWR | O_NONBLOCK);
+	PDEBUG("done.\n");
+
+	return fd;
+}
+#endif
+
+/**
+ * Returns success, when an ussp is opened.
+ */
+int ussp_connected(int port)
+{
+#if 0
+	struct ussp_operation op;
+
+	op.op = USSP_OPEN_RESULT;
+	if (cstatus[port + 1].opened)
+		op.arg = 0;
+	else
+		op.arg = -1;
+	op.len = 0;
+	write(ussp_fd[port], &op, sizeof(op));
+
+	PDEBUG("USSP port %d opened.\n", port);
+	return 0;
+#else
+	return 0;
+#endif
+}
+
+#if 0
+int write_msc(int channel)
+{
+	unsigned char msc[] = {0xF9, 0x01, 0xEF, 0x0B, 0xE3, 0x07, 0x07, 0x0D, 0x01, 0x79, 0xF9};
+	int length = sizeof(msc);
+	printf("msc length: %d\n", length);
+	dump((char *)msc, length);
+	write(serial_fd, msc, length);
+	unsigned char *buffer =  malloc(2048);
+	length = read(serial_fd, buffer, 2048);
+	dump((char *)buffer, length);
+
+	return 0;
+}
+#endif
+
+/** Writes a frame to a logical channel. C/R bit is set to 1.
+ * Doesn't support FCS counting for UI frames.
+ *
+ * PARAMS:
+ * channel - channel number (0 = control)
+
+ * input   - the data to be written
+ * count   - the length of the data
+ * type    - the type of the frame (with possible P/F-bit)
+ *
+ * RETURNS:
+ * number of characters written
+ */
+int write_frame(int channel, const char *input, int count, unsigned char type)
+{
+	// flag, EA=1 C channel, frame type, length 1-2
+	unsigned char prefix[5] = { F_FLAG, EA | CR, 0, 0, 0 };
+
+	unsigned char postfix[2] = { 0xFF, F_FLAG };
+	int prefix_length = 4, c;
+
+	if(_debug)
+		syslog(LOG_DEBUG,"send frame to ch: %d \n", channel);
+	// EA=1, Command, let's add address
+	prefix[1] = prefix[1] | ((63 & (unsigned char) channel) << 2);
+	// let's set control field
+	prefix[2] = type;
+
+	// let's not use too big frames
+	count = min(max_frame_size, count);
+
+	// length
+	if (count > 127)
+	{
+		prefix_length = 5;
+		prefix[3] = ((127 & count) << 1);
+		prefix[4] = (32640 & count) >> 7;
+	} else {
+		prefix[3] = 1 | (count << 1);
+	}
+	// CRC checksum
+	postfix[0] = make_fcs(prefix + 1, prefix_length - 1);
+
+	c = write(serial_fd, prefix, prefix_length);
+	dump((char *)prefix, prefix_length);
+	if (c != prefix_length)
+	{
+		if(_debug)
+			syslog(LOG_DEBUG,"Couldn't write the whole prefix to the serial port for the virtual port %d. Wrote only %d  bytes.", channel, c);
+		return 0;
+	}
+	if (count > 0)
+	{
+		c = write(serial_fd, input, count);
+		dump((char *)input, count);
+		if (count != c)
+		{
+			if(_debug)
+				syslog(LOG_DEBUG,"Couldn't write all data to the serial port from the virtual port %d. Wrote only %d bytes.\n", channel, c);
+			return 0;
+		}
+	}
+	c = write(serial_fd, postfix, 2);
+	dump((char *)postfix, 2);
+	if (c != 2)
+	{
+		if(_debug)
+			syslog(LOG_DEBUG,"Couldn't write the whole postfix to the serial port for the virtual port %d. Wrote only %d bytes.", channel, c);
+		return 0;
+	}
+
+	return count;
+}
+
+int write_test_cmd()
+{
+	unsigned char close_mux[2] = { C_CLD | CR, 1 };
+	printf("\nwrite UIH frame: ");
+	write_frame(1, (char *)close_mux, 2, UIH);
+	unsigned char *buf = malloc(2048);
+	int len = read(serial_fd, buf, 2048);
+	printf("\nClose mux respo: ");
+	dump((char *)buf, len);
+
+	return 0;
 }
 
 /* Handles received data from ussp device.
@@ -400,7 +493,9 @@ int ussp_recv_data(char *buf, int len, int port)
 	int last  = 0;
 	// try to write 5 times
 	while ((written  != len) && (i < WRITE_RETRIES)) {
-		last = write_frame(port + 1, buf + written, len - written, UIH);
+		printf("\n==============================\n");	
+		last = write_frame_copy(port + 1, buf + written, len - written, UIH, 0);
+
 		written += last;
 		if (last == 0) {
 			i++;
@@ -959,6 +1054,7 @@ int extract_frames(GSM0710_Buffer * buf)
 		syslog(LOG_DEBUG, "is in %s\n" , __FUNCTION__);
 	while ((frame = gsm0710_buffer_get_frame(buf)))
 	{
+		printf("==================================---\n");
 		++framesExtracted;
 		if ((FRAME_IS(UI, frame) || FRAME_IS(UIH, frame)))
 		{
@@ -1588,20 +1684,28 @@ int main(int argc, char *argv[], char *env[])
 
 		timeout.tv_sec = 1;
 		timeout.tv_usec = 0;
+/*XXX*/
+		//write_test_cmd();
 
 		sel = select(maxfd + 1, &rfds, NULL, NULL, &timeout);
 		if (faultTolerant) {
 			// get the current time
 			time(&currentTime);
 		}
-		if (sel > 0) {
+		if (1 || sel > 0) {
 
 			if (FD_ISSET(serial_fd, &rfds)) {
 				// input from serial port
 				if(_debug)
 					syslog(LOG_DEBUG, "Serial Data\n");
 				
-				if ((size = gsm0710_buffer_free(in_buf)) > 0 && (len = read(serial_fd, buf, min(size, sizeof(buf)))) > 0) {
+				//if (((size = gsm0710_buffer_free(in_buf)) > 0) && ((len = read(serial_fd, buf, min(size, sizeof(buf)))) > 0) || 1) {
+				if (1) {
+					size = gsm0710_buffer_free(in_buf);
+					len = read(serial_fd, buf, min(size, sizeof(buf)));
+					printf("\nreceive:\t");
+					dump((char *)buf, len);
+					printf("\nsize : %d\tlen: %d\n\n", (unsigned int)size, len);
 					gsm0710_buffer_write(in_buf, (char *)buf, len);
 					// extract and handle ready frames
 					if (extract_frames(in_buf) > 0 && faultTolerant) {
@@ -1613,17 +1717,24 @@ int main(int argc, char *argv[], char *env[])
 
 			// check virtual ports
 			for (i = 0; i < numOfPorts; i++) {
-				if (FD_ISSET(ussp_fd[i], &rfds))
-				{
-
+				//if (FD_ISSET(ussp_fd[i], &rfds))
+				if (1) {
 					// information from virtual port
 					if (remaining[i] > 0)
 					{
 						memcpy(buf, tmp[i], remaining[i]);
 						free(tmp[i]);
 					}
-					if ((len = read(ussp_fd[i], buf + remaining[i], sizeof(buf) - remaining[i])) > 0)
-						remaining[i] = ussp_recv_data((char *)buf, len + remaining[i], i);
+					//if ((len = read(ussp_fd[i], buf + remaining[i], sizeof(buf) - remaining[i])) > 0)
+					len = 4;
+					strncpy((char *)buf, "AT\r\n", 4);
+					remaining[i] = ussp_recv_data((char *)buf, len + remaining[i], i);
+#if 0
+					char *buffer = malloc(2048);
+					int length = read(serial_fd, buffer, 2048);
+					printf("\nread buffer: ");
+					dump(buffer, length);
+#endif
 					if(_debug)
 						syslog(LOG_DEBUG,"Data from ptya%d: %d bytes\n",i,len);
 					if(len<0)
