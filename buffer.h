@@ -109,7 +109,7 @@ int gsm0710_buffer_write2ch(GSM0710_Buffer *buf, int channel,
  * RETURNS
  * number of characters written
  */
-int gsm0710_buffer_write(GSM0710_Buffer *buf, const char *input, int count);
+int gsm0710_buffer_write(GSM0710_Buffer *buf, unsigned char input[2048], int count);
 
 /* Gets a frame from buffer. You have to remember to free this frame
  * when it's not needed anymore

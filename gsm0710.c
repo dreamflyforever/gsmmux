@@ -145,7 +145,7 @@ int dump(char *buffer, int length)
 {
 	int i;
 	for (i = 0; i < length; i++) {
-		printf("0x%02x ", (unsigned char)buffer[i]);
+		fprintf(stderr, "%02x ", (unsigned char)buffer[i]);
 	}
 
 	return 0;
@@ -161,7 +161,7 @@ int write_frame_copy(int channel, const char *input, int count, unsigned char ty
 	int prefix_length = 4, c;
 
 	if(_debug)
-		syslog(LOG_DEBUG,"send frame to ch: %d \n", channel);
+		fprintf(stderr, "send frame to ch: %d \n", channel);
 	// EA=1, Command, let's add address
 	prefix[1] = prefix[1] | ((63 & (unsigned char) channel) << 2);
 	// let's set control field
@@ -297,7 +297,7 @@ int write_frame(int channel, const char *input, int count, unsigned char type)
 	int prefix_length = 4, c;
 
 	if(_debug)
-		syslog(LOG_DEBUG,"send frame to ch: %d \n", channel);
+		fprintf(stderr, "send frame to ch: %d \n", channel);
 	// EA=1, Command, let's add address
 	prefix[1] = prefix[1] | ((63 & (unsigned char) channel) << 2);
 	// let's set control field
@@ -306,7 +306,7 @@ int write_frame(int channel, const char *input, int count, unsigned char type)
 	// let's not use too big frames
 	count = min(max_frame_size, count);
 
-	// length
+	// length /*TODO:*/
 	if (count > 127)
 	{
 		prefix_length = 5;
@@ -493,7 +493,7 @@ int ussp_recv_data(char *buf, int len, int port)
 	int last  = 0;
 	// try to write 5 times
 	while ((written  != len) && (i < WRITE_RETRIES)) {
-		printf("\n==============================\n");	
+		printf("\npty write to gsm: \n");
 		last = write_frame_copy(port + 1, buf + written, len - written, UIH, 0);
 
 		written += last;
@@ -510,7 +510,6 @@ int ussp_recv_data(char *buf, int len, int port)
 	return 0;
 #endif
 }
-
 
 int ussp_send_data(unsigned char *buf, int n, int port)
 {
@@ -530,6 +529,7 @@ int ussp_send_data(unsigned char *buf, int n, int port)
 #else
 	if(_debug)
 		syslog(LOG_DEBUG,"send data to port virtual port %d\n", port);
+	dump((char *)buf, n);
 	write(ussp_fd[port], buf, n);
 #endif
 	return n;
@@ -1049,12 +1049,10 @@ int extract_frames(GSM0710_Buffer * buf)
 	int framesExtracted = 0;
 
 	GSM0710_Frame *frame;
-
+	_debug = 1;
 	if(_debug)
 		syslog(LOG_DEBUG, "is in %s\n" , __FUNCTION__);
-	while ((frame = gsm0710_buffer_get_frame(buf)))
-	{
-		printf("==================================---\n");
+	while ((frame = gsm0710_buffer_get_frame(buf)))	{
 		++framesExtracted;
 		if ((FRAME_IS(UI, frame) || FRAME_IS(UIH, frame)))
 		{
@@ -1488,7 +1486,7 @@ int openDevicesAndMuxMode() {
 	syslog(LOG_INFO, "Opening control channel.\n");
 	printf("\nwrite SABM frame: ");
 	write_frame(0, NULL, 0, SABM | PF);
-#define dc 1
+#define dc 0
 #if dc
 	/*when write SABM to SM, read the buffer from the SM*/
 	char *read_buffer = malloc(2048);
@@ -1535,6 +1533,20 @@ void closeDevices()
  */
 int main(int argc, char *argv[], char *env[])
 {
+#if 0
+	int tmp_i;
+	for (tmp_i = 0; tmp_i < argc; tmp_i++) {
+		fprintf(stderr, "argv[%d]: %s\t", tmp_i, argv[tmp_i]);
+		fprintf(stderr, "env[%d]: %s\n", tmp_i, env[tmp_i]);
+	}
+	argc = 5;
+	argv[0] = "./gsmMuxd";
+	argv[1] = "-s";
+	argv[2] = "/dev/mux";
+	argv[3] = "/dev/ptmx";
+	argv[4] = "/dev/ptmx";
+
+#endif
 #define PING_TEST_LEN 6
 	static char ping_test[] = "\x23\x09PING";
 	//struct sigaction sa;
@@ -1555,11 +1567,7 @@ int main(int argc, char *argv[], char *env[])
 
 	programName = argv[0];
 	/*************************************/
-	if(argc<2)
-	{
-		usage(programName);
-		exit(-1);
-	}
+
 	_modem_type = GENERIC;
 
         _debug = 1;
@@ -1594,6 +1602,7 @@ int main(int argc, char *argv[], char *env[])
 			break;
 		case 's':
 			devSymlinkPrefix = optarg;
+			//fprintf(stderr, "\noptarg: %s\n", optarg);
 			break;
 		case 'w':
 			wait_for_daemon_status = 1;
@@ -1643,8 +1652,9 @@ int main(int argc, char *argv[], char *env[])
 		syslog(LOG_INFO, "Port %d : %s\n",t-optind,argv[t]);
 		ptydev[t-optind]=argv[t];
 	}
-	//exit(0);
+	
 	numOfPorts = t-optind;
+	//fprintf(stderr, "optind:%d\nnumOfports:%d\n", optind, numOfPorts);
 
 	syslog(LOG_INFO,"Malloc buffers...\n");
 	// allocate memory for data structures
@@ -1698,15 +1708,18 @@ int main(int argc, char *argv[], char *env[])
 				// input from serial port
 				if(_debug)
 					syslog(LOG_DEBUG, "Serial Data\n");
-				
-				//if (((size = gsm0710_buffer_free(in_buf)) > 0) && ((len = read(serial_fd, buf, min(size, sizeof(buf)))) > 0) || 1) {
-				if (1) {
-					size = gsm0710_buffer_free(in_buf);
-					len = read(serial_fd, buf, min(size, sizeof(buf)));
-					printf("\nreceive:\t");
+
+				if (((size = gsm0710_buffer_free(in_buf)) > 0) && ((len = read(serial_fd, buf, 100/*min(size, sizeof(buf))*/)) > 0)) {
+				//if (1) {
+				//	size = gsm0710_buffer_free(in_buf);
+				//	len = read(serial_fd, buf, min(size, sizeof(buf)));
+			        //	if ((size > 0) && (len > 0)) {
+						//printf("\nsize : %d\tlen: %d\n\n", size, len);
+			        //	}
+					fprintf(stderr, "\nserial data receive: ");
 					dump((char *)buf, len);
-					printf("\nsize : %d\tlen: %d\n\n", (unsigned int)size, len);
-					gsm0710_buffer_write(in_buf, (char *)buf, len);
+					printf("\n");
+					gsm0710_buffer_write(in_buf, buf, len);
 					// extract and handle ready frames
 					if (extract_frames(in_buf) > 0 && faultTolerant) {
 						frameReceiveTime = currentTime;
@@ -1717,33 +1730,33 @@ int main(int argc, char *argv[], char *env[])
 
 			// check virtual ports
 			for (i = 0; i < numOfPorts; i++) {
-				//if (FD_ISSET(ussp_fd[i], &rfds))
-				if (1) {
+				if (FD_ISSET(ussp_fd[i], &rfds)) {
 					// information from virtual port
 					if (remaining[i] > 0)
 					{
 						memcpy(buf, tmp[i], remaining[i]);
 						free(tmp[i]);
 					}
-					//if ((len = read(ussp_fd[i], buf + remaining[i], sizeof(buf) - remaining[i])) > 0)
-					len = 4;
-					strncpy((char *)buf, "AT\r\n", 4);
+					if ((len = read(ussp_fd[i], buf + remaining[i], sizeof(buf) - remaining[i])) > 0)
+					//len = 9;
+					//strncpy((char *)buf, "AT+CGMM\r\n", len);
+					//printf("\nAT+CGMM send: ");
 					remaining[i] = ussp_recv_data((char *)buf, len + remaining[i], i);
 #if 0
 					char *buffer = malloc(2048);
 					int length = read(serial_fd, buffer, 2048);
 					printf("\nread buffer: ");
+
 					dump(buffer, length);
 #endif
 					if(_debug)
-						syslog(LOG_DEBUG,"Data from ptya%d: %d bytes\n",i,len);
+						fprintf(stderr, "\nData from ptya%d: %d bytes\n",i,len);
 					if(len<0)
 					{
 						// Re-open pty, so that in 
 						remaining[i] = 0;
 						close(ussp_fd[i]);
-						if ((ussp_fd[i] = open_pty(ptydev[i], i)) < 0)
-						{
+						if ((ussp_fd[i] = open_pty(ptydev[i], i)) < 0) {
 							if(_debug)
 								syslog(LOG_DEBUG,"Can't re-open %s. %s (%d).\n", ptydev[i], strerror(errno), errno);
 							terminate=1;

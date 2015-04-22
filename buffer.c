@@ -71,156 +71,160 @@ unsigned char make_fcs(const unsigned char *input, int count) {
   return (0xFF-fcs);
 }
 
-
 GSM0710_Buffer *gsm0710_buffer_init() {
-  GSM0710_Buffer *buf;
-  if ((buf = malloc(sizeof(GSM0710_Buffer)))) {
-    memset(buf, 0, sizeof(GSM0710_Buffer));
-    buf->readp = buf->data;
-    buf->writep = buf->data;
-    buf->endp = buf->data + GSM0710_BUFFER_SIZE;
-  }
-  return buf;
+	GSM0710_Buffer *buf;
+	if ((buf = malloc(sizeof(GSM0710_Buffer)))) {
+		memset(buf, 0, sizeof(GSM0710_Buffer));
+		buf->readp = buf->data;
+		buf->writep = buf->data;
+		buf->endp = buf->data + GSM0710_BUFFER_SIZE;
+	}
+
+	return buf;
 }
 
 void gsm0710_buffer_destroy(GSM0710_Buffer *buf) {
   free(buf);
 }
 
-int gsm0710_buffer_write(GSM0710_Buffer *buf, const char *input, int count) {
-  int c=buf->endp - buf->writep;
+int gsm0710_buffer_write(GSM0710_Buffer *buf, unsigned char input[2048], int count) {
+	int c=buf->endp - buf->writep;
+	count = min(count, gsm0710_buffer_free(buf));
+	if (count > c) {
+		memcpy(buf->writep, input, c);
+		memcpy(buf->data, input+c, count-c);
+		buf->writep = buf->data + (count-c);
+	} else {
+		memcpy(buf->writep, input, count);
+		buf->writep += count;
+		if (buf->writep == buf->endp)
+			buf->writep = buf->data;
+	}
 
-  count = min(count, gsm0710_buffer_free(buf));
-  if (count > c) {
-    memcpy(buf->writep, input, c);
-    memcpy(buf->data, input+c, count-c);
-    buf->writep = buf->data + (count-c);
-  } else {
-    memcpy(buf->writep, input, count);
-    buf->writep += count;
-    if (buf->writep == buf->endp)
-      buf->writep = buf->data;
-  }
-    
-  return count;
+	return count;
 }
 
-GSM0710_Frame *gsm0710_buffer_get_frame(GSM0710_Buffer *buf) {
-  int end;
-  int length_needed = 5; // channel, type, length, fcs, flag
-  unsigned char *data;
-  unsigned char fcs = 0xFF;
+GSM0710_Frame *gsm0710_buffer_get_frame(GSM0710_Buffer *buf)
+{
+	int end;
+	int length_needed = 5; // channel, type, length, fcs, flag
+	unsigned char *data;
+	unsigned char fcs = 0xFF;
 
-  GSM0710_Frame *frame = NULL;
-
-  // Find start flag
-  while (!buf->flag_found && gsm0710_buffer_length(buf) > 0) {
-    if (*buf->readp == F_FLAG)
-      buf->flag_found = 1;
-    INC_BUF_POINTER(buf, buf->readp);
-  }
-  if (!buf->flag_found) // no frame started
-    return NULL;
-
-  // skip empty frames (this causes troubles if we're using DLC 62)
-  while (gsm0710_buffer_length(buf) > 0 && 
-	 (*buf->readp == F_FLAG)) {
-    INC_BUF_POINTER(buf, buf->readp);
-  }
-
-  if (gsm0710_buffer_length(buf) >= length_needed) {
-    data = buf->readp;
-    frame = malloc(sizeof(GSM0710_Frame));
-
-    frame->channel = ((*data & 252) >> 2);
-    fcs = r_crctable[fcs^*data];
-    INC_BUF_POINTER(buf,data);
-
-    frame->control = *data;
-    fcs = r_crctable[fcs^*data];
-    INC_BUF_POINTER(buf,data);
-
-    frame->data_length = (*data & 254) >> 1;
-    fcs = r_crctable[fcs^*data];
-    if ((*data & 1) == 0) {
-      /* Current spec (version 7.1.0) states these kind of frames to be invalid
-       * Long lost of sync might be caused if we would expect a long
-       * frame because of an error in length field.
-      INC_BUF_POINTER(buf,data);
-      frame->data_length += (*data*128);
-      fcs = r_crctable[fcs^*data];
-      length_needed++;
-      */
-      free(frame);
-      buf->readp = data;
-      buf->flag_found = 0;
-      return gsm0710_buffer_get_frame(buf);
-    }
-    length_needed += frame->data_length;
-    if (!(gsm0710_buffer_length(buf) >= length_needed)) {
-      free(frame);
-      return NULL;
-    }
-    INC_BUF_POINTER(buf,data);
-    //extract data
-    if (frame->data_length > 0) {
-      if ((frame->data = malloc(sizeof(char)*frame->data_length))) {
-	end = buf->endp - data;
-	if (frame->data_length > end) {
-	  memcpy(frame->data, data, end);
-	  memcpy(frame->data+end, buf->data, frame->data_length-end);
-	  data = buf->data + (frame->data_length-end);
-	} else {
-	  memcpy(frame->data, data, frame->data_length);
-	  data += frame->data_length;
-	  if (data == buf->endp)
-	    data = buf->data;
+	GSM0710_Frame *frame = NULL;
+#define debug_gsm 0
+	// Find start flag
+	while (!buf->flag_found && gsm0710_buffer_length(buf) > 0) {
+#if debug_gsm 
+		printf("\ndebug info: %s: %d\n", __FUNCTION__, __LINE__);
+#endif
+		if (*buf->readp == F_FLAG) {
+		//	printf("\ndebug info: %s: %d\n", __FUNCTION__, __LINE__);
+			buf->flag_found = 1;
+		}
+		INC_BUF_POINTER(buf, buf->readp);
 	}
-	if (FRAME_IS(UI, frame)) {
-	  for (end = 0; end < frame->data_length; end++)
-	    fcs = r_crctable[fcs^(frame->data[end])];
+	if (!buf->flag_found) {// no frame started
+			
+		//printf("\ndebug info: %s: %d\n", __FUNCTION__, __LINE__);
+		return NULL;
 	}
-      } else {
-	syslog(LOG_ALERT,"Out of memory, when allocating space for frame data.\n");
-	frame->data_length = 0;
-      }
-    }
-    // check FCS
-    if (r_crctable[fcs^(*data)] != 0xCF) {
-      syslog(LOG_INFO,"Dropping frame: FCS doesn't match\n");
-      destroy_frame(frame);
-      buf->flag_found = 0;
-      buf->dropped_count++;
-      buf->readp = data;
-      return gsm0710_buffer_get_frame(buf);
-    } else {
-      // check end flag
-      INC_BUF_POINTER(buf,data);
-      if (*data != F_FLAG) {
-	syslog(LOG_WARNING, "Dropping frame: End flag not found. Instead: %d\n", *data);
-	destroy_frame(frame);
-	buf->flag_found = 0;
-	buf->dropped_count++;
-	buf->readp = data;
-	return gsm0710_buffer_get_frame(buf);
-      } else {
-	buf->received_count++;
-      }
-      INC_BUF_POINTER(buf,data);
-    }
-    buf->readp = data;
-  }
-  return frame;
+	// skip empty frames (this causes troubles if we're using DLC 62)
+	while (gsm0710_buffer_length(buf) > 0 && 
+			(*buf->readp == F_FLAG)) {
+		INC_BUF_POINTER(buf, buf->readp);
+	}
+
+	if (gsm0710_buffer_length(buf) >= length_needed) {
+		data = buf->readp;
+		frame = malloc(sizeof(GSM0710_Frame));
+
+		frame->channel = ((*data & 252) >> 2);
+		fcs = r_crctable[fcs^*data]; //XXX
+		INC_BUF_POINTER(buf, data);
+
+		frame->control = *data;
+		fcs = r_crctable[fcs^*data];
+		INC_BUF_POINTER(buf,data);
+
+		frame->data_length = (*data & 254) >> 1;
+		fcs = r_crctable[fcs^*data];
+		if ((*data & 1) == 0) {
+			/* Current spec (version 7.1.0) states these kind of frames to be invalid
+			 * Long lost of sync might be caused if we would expect a long
+			 * frame because of an error in length field.*/
+
+			 INC_BUF_POINTER(buf,data);
+			 frame->data_length += (*data*128); /*TODO:check 128*/
+			 fcs = r_crctable[fcs^*data];
+			 length_needed++;
+			 //printf("%s %s %d\n", );
+#if 0	
+			 free(frame);
+			 buf->readp = data;
+			 buf->flag_found = 0;
+			 return gsm0710_buffer_get_frame(buf);
+#endif
+		}
+		length_needed += frame->data_length;
+		if (!(gsm0710_buffer_length(buf) >= length_needed)) {
+			free(frame);
+			return NULL;
+		}
+		INC_BUF_POINTER(buf,data);
+		//extract data
+		if (frame->data_length > 0) {
+			if ((frame->data = malloc(sizeof(char)*frame->data_length))) {
+				end = buf->endp - data;
+				if (frame->data_length > end) {
+					memcpy(frame->data, data, end);
+					memcpy(frame->data+end, buf->data, frame->data_length-end);
+					data = buf->data + (frame->data_length-end);
+				} else {
+					memcpy(frame->data, data, frame->data_length);
+					data += frame->data_length;
+					if (data == buf->endp)
+						data = buf->data;
+				}
+				if (FRAME_IS(UI, frame)) {
+					for (end = 0; end < frame->data_length; end++)
+						fcs = r_crctable[fcs^(frame->data[end])];
+				}
+			} else {
+				syslog(LOG_ALERT,"Out of memory, when allocating space for frame data.\n");
+				frame->data_length = 0;
+			}
+		}
+		// check FCS
+		if (r_crctable[fcs^(*data)] != 0xCF) {
+			syslog(LOG_INFO,"Dropping frame: FCS doesn't match\n");
+			destroy_frame(frame);
+			buf->flag_found = 0;
+			buf->dropped_count++;
+			buf->readp = data;
+			return gsm0710_buffer_get_frame(buf);
+		} else {
+			// check end flag
+			INC_BUF_POINTER(buf,data);
+			if (*data != F_FLAG) {
+				syslog(LOG_WARNING, "Dropping frame: End flag not found. Instead: %d\n", *data);
+				destroy_frame(frame);
+				buf->flag_found = 0;
+				buf->dropped_count++;
+				buf->readp = data;
+				return gsm0710_buffer_get_frame(buf);
+			} else {
+				buf->received_count++;
+			}
+			INC_BUF_POINTER(buf,data);
+		}
+		buf->readp = data;
+	}
+	return frame;
 }
 
 void destroy_frame(GSM0710_Frame *frame) {
-  if (frame->data_length > 0)
-    free(frame->data);
-  free(frame);
+	if (frame->data_length > 0)
+		free(frame->data);
+	free(frame);
 }
-
-
-
-
-
-
