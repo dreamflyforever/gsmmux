@@ -1,4 +1,8 @@
 /*
+ * The driver is known to work with the SIM900a
+ *
+ * Copyright (c) 2015 by nanchao(Shanghai) Inc.
+ * modefied by Shanjin Yang <sjyang@qq.com>
  *
  * GSM 07.10 Implementation with User Space Serial Ports
  *
@@ -84,7 +88,6 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
-//syslog
 #include <syslog.h>
 
 #include "buffer.h"
@@ -94,14 +97,7 @@
 #define DEFAULT_NUMBER_OF_PORTS 3
 #define WRITE_RETRIES 5
 #define MAX_CHANNELS   32
-//vitorio, only to use if necessary (don't ask in what i was thinking  when i wrote this)
-#define TRUE	1
-#define FALSE	0
 
-#define UNKNOW_MODEM	0
-#define MC35		1
-#define GENERIC		2
-#define IRZ52IT		3
 // Defines how often the modem is polled when automatic restarting is enabled
 // The value is in seconds
 #define POLLING_INTERVAL 5
@@ -113,22 +109,21 @@ static char* devSymlinkPrefix = 0;
 static int *ussp_fd;
 static int serial_fd;
 static Channel_Status *cstatus;
-static int max_frame_size = 31; // The limit of Sony-Ericsson GM47
+/*TODO: adapt to sim900a ?*/
+static int max_frame_size = 31;
 static int wait_for_daemon_status = 0;
 
-static GSM0710_Buffer *in_buf;  // input buffer
-
+/*input buffer*/
+static GSM0710_Buffer *in_buf;
 static int _debug = 0;
 static pid_t the_pid;
 int _priority;
-int _modem_type;
 static char *serportdev;
 static int pin_code = 0;
 static char *ptydev[MAX_CHANNELS];
 static int numOfPorts;
 static int maxfd;
 static int baudrate = 0;
-static int *remaining;
 static int faultTolerant = 0;
 static int restart = 0;
 
@@ -150,6 +145,7 @@ int dump(char *buffer, int length)
 
 	return 0;
 }
+
 int write_frame_copy(int channel, const char *input, int count, unsigned char type, int arg)
 {
 	// flag, EA=1 C channel, frame type, length 1-2
@@ -171,8 +167,7 @@ int write_frame_copy(int channel, const char *input, int count, unsigned char ty
 	count = min(max_frame_size, count);
 
 	// length
-	if (count > 127)
-	{
+	if (count > 127) {
 		prefix_length = 5;
 		prefix[3] = ((127 & count) << 1);
 		prefix[4] = (32640 & count) >> 7;
@@ -184,18 +179,15 @@ int write_frame_copy(int channel, const char *input, int count, unsigned char ty
 
 	c = write(serial_fd, prefix, prefix_length);
 	dump((char *)prefix, prefix_length);
-	if (c != prefix_length)
-	{
+	if (c != prefix_length) {
 		if(_debug)
 			syslog(LOG_DEBUG,"Couldn't write the whole prefix to the serial port for the virtual port %d. Wrote only %d  bytes.", channel, c);
 		return 0;
 	}
-	if (count > 0)
-	{
+	if (count > 0) {
 		c = write(serial_fd, input, count);
 		dump((char *)input, count);
-		if (count != c)
-		{
+		if (count != c) {
 			if(_debug)
 				syslog(LOG_DEBUG,"Couldn't write all data to the serial port from the virtual port %d. Wrote only %d bytes.\n", channel, c);
 			return 0;
@@ -203,8 +195,7 @@ int write_frame_copy(int channel, const char *input, int count, unsigned char ty
 	}
 	c = write(serial_fd, postfix, 2);
 	dump((char *)postfix, 2);
-	if (c != 2)
-	{
+	if (c != 2) {
 		if(_debug)
 			syslog(LOG_DEBUG,"Couldn't write the whole postfix to the serial port for the virtual port %d. Wrote only %d bytes.", channel, c);
 		return 0;
@@ -213,67 +204,13 @@ int write_frame_copy(int channel, const char *input, int count, unsigned char ty
 	return count;
 }
 
-
-#if 0
-/* Opens USSP port for use.
- *
- * PARAMS:
- * port - port number
- * RETURNS
- * file descriptor or -1 on error
- */
-int ussp_open(int port)
-{
-	int fd;
-	char name[] = "ser0\0";
-
-	name[3] = (char) (0x30 + port);
-	PDEBUG("Open serial port %s ", name);
-	fd = open(name, O_RDWR | O_NONBLOCK);
-	PDEBUG("done.\n");
-
-	return fd;
-}
-#endif
-
 /**
  * Returns success, when an ussp is opened.
  */
 int ussp_connected(int port)
 {
-#if 0
-	struct ussp_operation op;
-
-	op.op = USSP_OPEN_RESULT;
-	if (cstatus[port + 1].opened)
-		op.arg = 0;
-	else
-		op.arg = -1;
-	op.len = 0;
-	write(ussp_fd[port], &op, sizeof(op));
-
-	PDEBUG("USSP port %d opened.\n", port);
-	return 0;
-#else
-	return 0;
-#endif
-}
-
-#if 0
-int write_msc(int channel)
-{
-	unsigned char msc[] = {0xF9, 0x01, 0xEF, 0x0B, 0xE3, 0x07, 0x07, 0x0D, 0x01, 0x79, 0xF9};
-	int length = sizeof(msc);
-	printf("msc length: %d\n", length);
-	dump((char *)msc, length);
-	write(serial_fd, msc, length);
-	unsigned char *buffer =  malloc(2048);
-	length = read(serial_fd, buffer, 2048);
-	dump((char *)buffer, length);
-
 	return 0;
 }
-#endif
 
 /** Writes a frame to a logical channel. C/R bit is set to 1.
  * Doesn't support FCS counting for UI frames.
@@ -307,8 +244,7 @@ int write_frame(int channel, const char *input, int count, unsigned char type)
 	count = min(max_frame_size, count);
 
 	// length /*TODO:*/
-	if (count > 127)
-	{
+	if (count > 127) {
 		prefix_length = 5;
 		prefix[3] = ((127 & count) << 1);
 		prefix[4] = (32640 & count) >> 7;
@@ -320,18 +256,15 @@ int write_frame(int channel, const char *input, int count, unsigned char type)
 
 	c = write(serial_fd, prefix, prefix_length);
 	dump((char *)prefix, prefix_length);
-	if (c != prefix_length)
-	{
+	if (c != prefix_length) {
 		if(_debug)
 			syslog(LOG_DEBUG,"Couldn't write the whole prefix to the serial port for the virtual port %d. Wrote only %d  bytes.", channel, c);
 		return 0;
 	}
-	if (count > 0)
-	{
+	if (count > 0) {
 		c = write(serial_fd, input, count);
 		dump((char *)input, count);
-		if (count != c)
-		{
+		if (count != c) {
 			if(_debug)
 				syslog(LOG_DEBUG,"Couldn't write all data to the serial port from the virtual port %d. Wrote only %d bytes.\n", channel, c);
 			return 0;
@@ -339,27 +272,13 @@ int write_frame(int channel, const char *input, int count, unsigned char type)
 	}
 	c = write(serial_fd, postfix, 2);
 	dump((char *)postfix, 2);
-	if (c != 2)
-	{
+	if (c != 2) {
 		if(_debug)
 			syslog(LOG_DEBUG,"Couldn't write the whole postfix to the serial port for the virtual port %d. Wrote only %d bytes.", channel, c);
 		return 0;
 	}
 
 	return count;
-}
-
-int write_test_cmd()
-{
-	unsigned char close_mux[2] = { C_CLD | CR, 1 };
-	printf("\nwrite UIH frame: ");
-	write_frame(1, (char *)close_mux, 2, UIH);
-	unsigned char *buf = malloc(2048);
-	int len = read(serial_fd, buf, 2048);
-	printf("\nClose mux respo: ");
-	dump((char *)buf, len);
-
-	return 0;
 }
 
 /* Handles received data from ussp device.
@@ -377,117 +296,6 @@ int write_test_cmd()
  */
 int ussp_recv_data(char *buf, int len, int port)
 {
-#if 0
-	int n, written;
-	unsigned char pkt_buf[4096];
-	struct ussp_operation *op = (struct ussp_operation *) pkt_buf, *top;
-	struct termios *tiosp;
-	int i;                      // size
-	unsigned char msc[5] = { CR | C_MSC, 0x5, 0, 0, 1 };
-
-	PDEBUG( "(DEBUG) %s chamada\n", __FUNCTION__);
-
-	memcpy(pkt_buf, buf, len);
-	n = len;
-	op = (struct ussp_operation *) pkt_buf;
-
-	for (top = op;
-			/* check for partial packet - first, make sure top->len is actually in pkt_buf */
-			((char *) top + sizeof(struct ussp_operation) <= ((char *) op) + n)
-			&& ((char *) top + sizeof(struct ussp_operation) + top->len <= ((char *) op) + n);
-			top = (struct ussp_operation *) (((char *) top) + top->len + sizeof(struct ussp_operation)))
-	{
-
-		switch (top->op)
-		{
-			case USSP_OPEN:
-				ussp_connected(port);
-				break;
-			case USSP_CLOSE:
-				PDEBUG("Close ussp port %d\n", port);
-				break;
-			case USSP_WRITE:
-				written = 0;
-				i = 0;
-				// try to write 5 times
-				while ((written += write_frame(port + 1, top->data + written,
-								top->len - written, UIH)) != top->len && i < WRITE_RETRIES)
-				{
-					i++;
-				}
-				if (i == WRITE_RETRIES)
-				{
-					PDEBUG("Couldn't write data to channel %d. Wrote only %d bytes, when should have written %ld.\n",
-							(port + 1), written, top->len);
-				}
-				break;
-			case USSP_SET_TERMIOS:
-				tiosp = (struct termios *) (top + 1);
-				if ((tiosp->c_cflag & CBAUD) == B0 && (cstatus[(port + 1)].v24_signals & S_RTC) > 0)
-				{
-					// drop DTR
-					PDEBUG("Drop DTR.\n");
-					msc[2] = 3 | ((63 & (port + 1)) << 2);
-					msc[3] = cstatus[(port + 1)].v24_signals & ~S_RTC;
-					cstatus[(port + 1)].v24_signals = msc[3];
-					write_frame(0, msc, 4, UIH);
-				}
-				else if ((tiosp->c_cflag & CBAUD) != B0 && (cstatus[(port + 1)].v24_signals & S_RTC) == 0)
-				{
-					// DTR up
-					PDEBUG("DTR up.\n");
-					msc[2] |= ((63 & (port + 1)) << 2);
-					msc[3] = cstatus[(port + 1)].v24_signals | S_RTC;
-					cstatus[(port + 1)].v24_signals = msc[3];
-					write_frame(0, msc, 4, UIH);
-				}
-#ifdef DEBUG
-				PDEBUG("Set termios for ussp port %d\n", port);
-				PDEBUG("\tinput mode flags:   0x%04x\n", tiosp->c_iflag);
-				PDEBUG("\toutput mode flags:  0x%04x\n", tiosp->c_oflag);
-				PDEBUG("\tcontrol mode flags: 0x%04x\n", tiosp->c_cflag);
-				PDEBUG("\tlocal mode flags:   0x%04x\n", tiosp->c_lflag);
-				PDEBUG("\tline discipline:    0x%02x\n", tiosp->c_line);
-				PDEBUG("\tcontrol characters: ");
-				for (i = 0; i < NCCS; i++)
-					PDEBUG("0x%02x ", tiosp->c_cc[i]);
-				PDEBUG("\n");
-				PDEBUG("\tinput speed:        0x%02x (%i)\n", tiosp->c_ispeed, tiosp->c_ispeed);
-				PDEBUG("\toutput speed:       0x%02x (%i)\n", tiosp->c_ospeed, tiosp->c_ospeed);
-#endif
-				break;
-			case USSP_MSC:
-				PDEBUG("Modem signal change\n");
-				msc[2] = 3 | ((63 & (port + 1)) << 2);
-				msc[3] = S_DV;
-				if ((top->arg & USSP_DTR) == USSP_DTR)
-				{
-					msc[3] |= S_RTC;
-					PDEBUG("RTC\n");
-				}
-				if ((top->arg & USSP_RTS) == USSP_RTS)
-				{
-					msc[3] |= S_RTR;
-					PDEBUG("RTR\n");
-				}
-				else
-				{
-					msc[3] |= S_FC;
-					PDEBUG("FC\n");
-				}
-				cstatus[(port + 1)].v24_signals = msc[3];       // save the signals
-				write_frame(0, msc, 4, UIH);
-				break;
-			default:
-				PDEBUG("Unknown code: %d\n", top->op);
-				break;
-		}
-
-	}
-
-	/* remaining bytes in partial packet */
-	return ((char *) op + n) - (char *) top;
-#else
 	int written = 0;
 	int i = 0;
 	int last  = 0;
@@ -501,43 +309,31 @@ int ussp_recv_data(char *buf, int len, int port)
 			i++;
 		}
 	}
-	if (i == WRITE_RETRIES)
-	{
+	if (i == WRITE_RETRIES) {
 		if(_debug)
 			syslog(LOG_DEBUG,"Couldn't write data to channel %d. Wrote only %d bytes, when should have written %ld.\n",
 					(port + 1), written, (long)len);
 	}
+
 	return 0;
-#endif
 }
 
 int ussp_send_data(unsigned char *buf, int n, int port)
 {
-#if 0
-	struct ussp_operation *op;
 
-	op = malloc(sizeof(struct ussp_operation) + n);
-
-	op->op = USSP_READ;
-	op->arg = 0;
-	op->len = n;
-	memcpy(op->data, buf, n);
-
-	write(ussp_fd[port], op, sizeof(struct ussp_operation) + n);
-
-	free(op);
-#else
 	if(_debug)
 		syslog(LOG_DEBUG,"send data to port virtual port %d\n", port);
+
 	dump((char *)buf, n);
 	write(ussp_fd[port], buf, n);
-#endif
+	
 	return n;
 }
 
 // Returns 1 if found, 0 otherwise. needle must be null-terminated.
 // strstr might not work because WebBox sends garbage before the first OK
-int findInBuf(char* buf, int len, char* needle) {
+int findInBuf(char* buf, int len, char* needle)
+{
 	int i;
 	int needleMatchedPos=0;
 
@@ -601,14 +397,12 @@ int at_command(int fd, char *cmd, int to)
 		timeout.tv_usec = to;
 
 		if ((sel = select(fd + 1, &rfds, NULL, NULL, &timeout)) > 0) {
-			//if ((sel = select(fd + 1, &rfds, NULL, NULL, NULL)) > 0)
 			if (FD_ISSET(fd, &rfds)) {
 				memset(buf, 0, sizeof(buf));
 				len = read(fd, buf, sizeof(buf));
 				if(_debug) {
 					syslog(LOG_DEBUG, " read %d bytes == %s\n", len, buf);
 				}
-				//if (strstr(buf, "\r\nOK\r\n") != NULL)
 				if (findInBuf((char *)buf, len, "OK")) {
 					returnCode = 1;
 					break;
@@ -625,7 +419,8 @@ int at_command(int fd, char *cmd, int to)
 	return returnCode;
 }
 
-char *createSymlinkName(int idx) {
+char *createSymlinkName(int idx)
+{
 	if (devSymlinkPrefix == NULL) {
 		return NULL;
 	}
@@ -634,7 +429,8 @@ char *createSymlinkName(int idx) {
 	return symLinkName;
 }
 
-int open_pty(char* devname, int idx) {
+int open_pty(char* devname, int idx)
+{
 	struct termios options;
 	int fd = open(devname, O_RDWR | O_NONBLOCK);
 	char *symLinkName = createSymlinkName(idx);
@@ -672,11 +468,11 @@ int open_pty(char* devname, int idx) {
 	return fd;
 }
 
-
 /**
  * Determine baud rate index for CMUX command
  */
-int indexOfBaud(int baudrate) {
+int index_of_baud(int baudrate)
+{
 	int i;
 
 	for (i = 0; i < sizeof(baudrates) / sizeof(baudrates[0]); ++i) {
@@ -691,7 +487,8 @@ int indexOfBaud(int baudrate) {
  * and then back up. This is needed to get some modems 
  * (such as Siemens MC35i) to wake up.
  */
-void setAdvancedOptions(int fd, speed_t baud) {
+void setAdvancedOptions(int fd, speed_t baud)
+{
 	struct termios options;
 	struct termios options_cpy;
 
@@ -708,16 +505,8 @@ void setAdvancedOptions(int fd, speed_t baud) {
 
 	// Enable the receiver and set local mode and 8N1
 	options.c_cflag = (CLOCAL | CREAD | CS8 | HUPCL);
-	// enable hardware flow control (CNEW_RTCCTS)
-	// options.c_cflag |= CRTSCTS;
 	// Set speed
 	options.c_cflag |= baud;
-
-	/*
-	   options.c_cflag &= ~PARENB;
-	   options.c_cflag &= ~CSTOPB;
-	   options.c_cflag &= ~CSIZE; // Could this be wrong!?!?!?
-	 */
 
 	// set raw input
 	options.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
@@ -768,7 +557,7 @@ int open_serialport(char *dev)
 
 	if (fd != -1)
 	{
-		int index = indexOfBaud(baudrate);
+		int index = index_of_baud(baudrate);
 		if(_debug)
 			syslog(LOG_DEBUG, "serial opened\n" );
 		if (index > 0) {
@@ -782,10 +571,6 @@ int open_serialport(char *dev)
 
 			// get the parameters
 			tcgetattr(fd, &options);
-
-			// Set the baud rates to 57600...
-			// cfsetispeed(&options, B57600);
-			// cfsetospeed(&options, B57600);
 
 			// Enable the receiver and set local mode...
 			options.c_cflag |= (CLOCAL | CREAD);
@@ -865,159 +650,12 @@ void print_frame(GSM0710_Frame * frame)
 		if(_debug)
 		{
 			syslog(LOG_DEBUG,"frame->data = %s / size = %d\n",frame->data, frame->data_length);
-			//fwrite(frame->data, sizeof(char), frame->data_length, stdout);
 			syslog(LOG_DEBUG,"\n");
 		}
 	}
 
 }
 
-/* Handles commands received from the control channel.
- */
-void handle_command(GSM0710_Frame * frame)
-{
-#if 1
-	unsigned char type, signals;
-	int length = 0, i, type_length, channel, supported = 1;
-	unsigned char *response;
-	// struct ussp_operation op;
-
-	if(_debug)
-		syslog(LOG_DEBUG, "is in %s\n" , __FUNCTION__);
-
-	if (frame->data_length > 0)
-	{
-		type = frame->data[0];  // only a byte long types are handled now
-		// skip extra bytes
-		for (i = 0; (frame->data_length > i && (frame->data[i] & EA) == 0); i++);
-		i++;
-		type_length = i;
-		if ((type & CR) == CR)
-		{
-			// command not ack
-
-			// extract frame length
-			while (frame->data_length > i)
-			{
-				length = (length * 128) + ((frame->data[i] & 254) >> 1);
-				if ((frame->data[i] & 1) == 1)
-					break;
-				i++;
-			}
-			i++;
-
-			switch((type & ~CR))
-			{
-				case C_CLD:
-					syslog(LOG_INFO,"The mobile station requested mux-mode termination.\n");
-					if (faultTolerant) {
-						// Signal restart
-						restart = 1;
-					} else {
-						terminate = 1;
-						terminateCount = -1;    // don't need to close down channels
-					}
-					break;
-				case C_TEST:
-#ifdef DEBUG
-					if(_debug)
-						syslog(LOG_DEBUG,"Test command: ");
-					if(_debug)
-						syslog(LOG_DEBUG,"frame->data = %s  / frame->data_length = %d\n",frame->data + i, frame->data_length - i);
-					//fwrite(frame->data + i, sizeof(char), frame->data_length - i, stdout);
-#endif
-					break;
-				case C_MSC:
-					if (i + 1 < frame->data_length)
-					{
-						channel = ((frame->data[i] & 252) >> 2);
-						i++;
-						signals = (frame->data[i]);
-						// op.op = USSP_MSC;
-						// op.arg = USSP_RTS;
-						// op.len = 0;
-
-						if(_debug)
-							syslog(LOG_DEBUG,"Modem status command on channel %d.\n", channel);
-						if ((signals & S_FC) == S_FC)
-						{
-							if(_debug)
-								syslog(LOG_DEBUG,"No frames allowed.\n");
-						}
-						else
-						{
-							// op.arg |= USSP_CTS;
-							if(_debug)
-								syslog(LOG_DEBUG,"Frames allowed.\n");
-						}
-						if ((signals & S_RTC) == S_RTC)
-						{
-							// op.arg |= USSP_DSR;
-							if(_debug)
-								syslog(LOG_DEBUG,"RTC\n");
-						}
-						if ((signals & S_IC) == S_IC)
-						{
-							// op.arg |= USSP_RI;
-							if(_debug)
-								syslog(LOG_DEBUG,"Ring\n");
-						}
-						if ((signals & S_DV) == S_DV)
-						{
-							// op.arg |= USSP_DCD;
-							if(_debug)
-								syslog(LOG_DEBUG,"DV\n");
-						}
-						// if (channel > 0)
-						//     write(ussp_fd[(channel - 1)], &op, sizeof(op));
-					}
-					else
-					{
-						syslog(LOG_ERR,"ERROR: Modem status command, but no info. i: %d, len: %d, data-len: %d\n", i, length,
-								frame->data_length);
-					}
-					break;
-				default:
-					syslog(LOG_ALERT,"Unknown command (%d) from the control channel.\n", type);
-					response = malloc(sizeof(char) * (2 + type_length));
-					response[0] = C_NSC;
-					// supposes that type length is less than 128
-					response[1] = EA & ((127 & type_length) << 1);
-					i = 2;
-					while (type_length--)
-					{
-						response[i] = frame->data[(i - 2)];
-						i++;
-					}
-					write_frame(0, (char *)response, i, UIH);
-					free(response);
-					supported = 0;
-					break;
-			}
-
-			if (supported)
-			{
-				// acknowledge the command
-				frame->data[0] = frame->data[0] & ~CR;
-				write_frame(0, (char *)frame->data, frame->data_length, UIH);
-			}
-		}
-		else
-		{
-			// received ack for a command
-			if (COMMAND_IS(C_NSC, type))
-			{
-				syslog(LOG_ALERT,"The mobile station didn't support the command sent.\n");
-			}
-			else
-			{
-				if(_debug)
-					syslog(LOG_DEBUG,"Command acknowledged by the mobile station.\n");
-			}
-		}
-	}
-#endif
-}
 
 // shows how to use this program
 void usage(char *_name)
@@ -1070,7 +708,6 @@ int extract_frames(GSM0710_Buffer * buf)
 				// control channel command
 				if(_debug)
 					syslog(LOG_DEBUG,"control channel command\n");
-				handle_command(frame);
 			}
 		}
 		else
@@ -1081,99 +718,98 @@ int extract_frames(GSM0710_Buffer * buf)
 #ifdef DEBUG
 			print_frame(frame);
 #endif
-			switch((frame->control & ~PF))
-			{
-				case UA:
-					if(_debug)
-						syslog(LOG_DEBUG,"is FRAME_IS(UA, frame)\n");
-					if (cstatus[frame->channel].opened == 1)
+			switch((frame->control & ~PF)) {
+			case UA:
+				if(_debug)
+					syslog(LOG_DEBUG,"is FRAME_IS(UA, frame)\n");
+				if (cstatus[frame->channel].opened == 1)
+				{
+					syslog(LOG_INFO,"Logical channel %d closed.\n", frame->channel);
+					cstatus[frame->channel].opened = 0;
+				}
+				else
+				{
+					cstatus[frame->channel].opened = 1;
+					if (frame->channel == 0)
 					{
-						syslog(LOG_INFO,"Logical channel %d closed.\n", frame->channel);
-						cstatus[frame->channel].opened = 0;
+						syslog(LOG_INFO,"Control channel opened.\n");
+						// send version Siemens version test
+						write_frame(0, version_test, 18, UIH);
 					}
 					else
 					{
-						cstatus[frame->channel].opened = 1;
-						if (frame->channel == 0)
-						{
-							syslog(LOG_INFO,"Control channel opened.\n");
-							// send version Siemens version test
-							write_frame(0, version_test, 18, UIH);
-						}
-						else
-						{
-							syslog(LOG_INFO,"Logical channel %d opened.\n", frame->channel);
-						}
+						syslog(LOG_INFO,"Logical channel %d opened.\n", frame->channel);
 					}
-					break;
-				case DM:
-					if (cstatus[frame->channel].opened)
+				}
+				break;
+			case DM:
+				if (cstatus[frame->channel].opened)
+				{
+					syslog(LOG_INFO,"DM received, so the channel %d was already closed.\n", frame->channel);
+					cstatus[frame->channel].opened = 0;
+				}
+				else
+				{
+					if (frame->channel == 0)
 					{
-						syslog(LOG_INFO,"DM received, so the channel %d was already closed.\n", frame->channel);
-						cstatus[frame->channel].opened = 0;
+						syslog(LOG_INFO,"Couldn't open control channel.\n->Terminating.\n");
+						terminate = 1;
+						terminateCount = -1;    // don't need to close channels
 					}
 					else
 					{
-						if (frame->channel == 0)
-						{
-							syslog(LOG_INFO,"Couldn't open control channel.\n->Terminating.\n");
+						syslog(LOG_INFO,"Logical channel %d couldn't be opened.\n", frame->channel);
+					}
+				}
+				break;
+			case DISC:
+				if (cstatus[frame->channel].opened)
+				{
+					cstatus[frame->channel].opened = 0;
+					write_frame(frame->channel, NULL, 0, UA | PF);
+					if (frame->channel == 0)
+					{
+						syslog(LOG_INFO,"Control channel closed.\n");
+						if (faultTolerant) {
+							restart = 1;
+						} else {
 							terminate = 1;
 							terminateCount = -1;    // don't need to close channels
 						}
-						else
-						{
-							syslog(LOG_INFO,"Logical channel %d couldn't be opened.\n", frame->channel);
-						}
-					}
-					break;
-				case DISC:
-					if (cstatus[frame->channel].opened)
-					{
-						cstatus[frame->channel].opened = 0;
-						write_frame(frame->channel, NULL, 0, UA | PF);
-						if (frame->channel == 0)
-						{
-							syslog(LOG_INFO,"Control channel closed.\n");
-							if (faultTolerant) {
-								restart = 1;
-							} else {
-								terminate = 1;
-								terminateCount = -1;    // don't need to close channels
-							}
-						}
-						else
-						{
-							syslog(LOG_INFO,"Logical channel %d closed.\n", frame->channel);
-						}
 					}
 					else
 					{
-						// channel already closed
-						syslog(LOG_INFO,"Received DISC even though channel %d was already closed.\n", frame->channel);
-						write_frame(frame->channel, NULL, 0, DM | PF);
+						syslog(LOG_INFO,"Logical channel %d closed.\n", frame->channel);
 					}
-					break;
-				case SABM:
-					// channel open request
-					if (cstatus[frame->channel].opened == 0)
+				}
+				else
+				{
+					// channel already closed
+					syslog(LOG_INFO,"Received DISC even though channel %d was already closed.\n", frame->channel);
+					write_frame(frame->channel, NULL, 0, DM | PF);
+				}
+				break;
+			case SABM:
+				// channel open request
+				if (cstatus[frame->channel].opened == 0)
+				{
+					if (frame->channel == 0)
 					{
-						if (frame->channel == 0)
-						{
-							syslog(LOG_INFO,"Control channel opened.\n");
-						}
-						else
-						{
-							syslog(LOG_INFO,"Logical channel %d opened.\n", frame->channel);
-						}
+						syslog(LOG_INFO,"Control channel opened.\n");
 					}
 					else
 					{
-						// channel already opened
-						syslog(LOG_INFO,"Received SABM even though channel %d was already closed.\n", frame->channel);
+						syslog(LOG_INFO,"Logical channel %d opened.\n", frame->channel);
 					}
-					cstatus[frame->channel].opened = 1;
-					write_frame(frame->channel, NULL, 0, UA | PF);
-					break;
+				}
+				else
+				{
+					// channel already opened
+					syslog(LOG_INFO,"Received SABM even though channel %d was already closed.\n", frame->channel);
+				}
+				cstatus[frame->channel].opened = 1;
+				write_frame(frame->channel, NULL, 0, UA | PF);
+				break;
 			}
 		}
 
@@ -1211,20 +847,20 @@ int daemonize(int _debug)
 				} 
 				exit(0);//parent goes bye-bye
 			}
-		//child continues
-		setsid();   //become session leader
-		//signal(SIGHUP, SIG_IGN);
+		/*child continues become session leader*/
+		setsid(); 
 		if(wait_for_daemon_status == 0 && (the_pid = fork()) != 0)
 			exit(0);
-		chdir("/"); //change working directory
-		umask(0);// clear our file mode creation mask
 
-		// Close out the standard file descriptors
+		chdir("/");
+		umask(0);
+
+		/*Close out the standard file descriptors*/
 		close(STDIN_FILENO);
 		close(STDOUT_FILENO);
 		close(STDERR_FILENO);
 	}
-	//daemonize process stop here
+	/*daemonize process stop here*/
 	return 0;
 }
 
@@ -1234,148 +870,31 @@ int daemonize(int _debug)
  */
 void signal_treatment(int param)
 {
-	switch(param)
-	{
-		case SIGPIPE:
-			exit(0);
-			break;
-		case SIGHUP:
-			//reread the configuration files
-			break;
-		case SIGINT:
-			//exit(0);
-			terminate = 1;
-			break;
-		case SIGKILL:
-			//kill immediatly
-			//i'm not sure if i put exit or sustain the terminate attribution
-			terminate = 1;
-			//exit(0);
-			break;
-		case SIGUSR1:
-			terminate  = 1;
-			//sig_term(param);
-		case SIGTERM:
-			terminate = 1;
-			break;
-		default:
-			exit(0);
-			break;
+	switch(param) {
+	case SIGPIPE:
+		exit(0);
+		break;
+	case SIGHUP:
+		/*reread the configuration files*/
+		break;
+	case SIGINT:
+		terminate = 1;
+		break;
+	case SIGKILL:
+		/*kill immediatly*/
+		/*XXX:i'm not sure if i put exit or sustain the terminate attribution*/
+		terminate = 1;
+		break;
+	case SIGUSR1:
+		terminate  = 1;
+	case SIGTERM:
+		terminate = 1;
+		break;
+	default:
+		exit(0);
+		break;
 	}
 
-}
-
-/**
- * Function to init Modemd Siemes MC35 families
- * Siemens need and special step-by for after get-in MUX state
- */
-int initSiemensMC35()
-{
-	char mux_command[] = "AT+CMUX=0\r\n";
-	char speed_command[20] = "AT+IPR=57600\r\n";
-	char close_mux[2] = { C_CLD | CR, 1 };
-
-
-	int baud = indexOfBaud(baudrate);
-	//Modem Init for Siemens MC35i
-	if (!at_command(serial_fd,"AT\r\n", 10000))
-	{
-		if(_debug)
-			syslog(LOG_DEBUG, "ERROR AT %d\r\n", __LINE__);
-
-		syslog(LOG_INFO, "Modem does not respond to AT commands, trying close MUX mode");
-		write_frame(0, (char *)close_mux, 2, UIH);
-		at_command(serial_fd,"AT\r\n", 10000);
-	}
-
-	if (baud != 0) {
-		sprintf(speed_command, "AT+IPR=%d\r\n", baudrate);
-	}
-	if (!at_command(serial_fd, speed_command, 10000))
-	{
-		if(_debug)
-			syslog(LOG_DEBUG, "ERROR %s %d \r\n", speed_command, __LINE__);
-	}
-	if (!at_command(serial_fd,"AT\r\n", 10000))
-	{
-		if(_debug)
-			syslog(LOG_DEBUG, "ERROR AT %d \r\n", __LINE__);
-	}
-
-	if (!at_command(serial_fd,"AT&S0\r\n", 10000))
-	{
-		if(_debug)
-			syslog(LOG_DEBUG, "ERRO AT&S0 %d\r\n", __LINE__);
-	}
-	if (!at_command(serial_fd,"AT\\Q3\r\n", 10000))
-	{
-		if(_debug)
-			syslog(LOG_DEBUG, "ERRO AT\\Q3 %d\r\n", __LINE__);
-	}
-	if (pin_code > 0 && pin_code < 10000) 
-	{
-		// Some modems, such as webbox, will sometimes hang if SIM code
-		// is given in virtual channel
-		char pin_command[20];
-		sprintf(pin_command, "AT+CPIN=\"%d\"\r\n", pin_code);
-		if (!at_command(serial_fd,pin_command, 20000))
-		{
-			if(_debug)
-				syslog(LOG_DEBUG, "ERROR AT+CPIN %d\r\n", __LINE__);
-		}
-	}
-	if (!at_command(serial_fd, mux_command, 10000))
-	{
-		syslog(LOG_ERR, "MUX mode doesn't function.\n");
-		return -1;
-	}
-	return 0;
-}
-
-int initIRZ52IT()
-{
-	char mux_command[20] = "AT+CMUX=0\r\n";
-	char baud_command[] = "AT+IPR=115200\r\n";
-	unsigned char close_mux[2] = { C_CLD | CR, 1 };
-
-	int baud = indexOfBaud(baudrate);
-	if (baud != 0) {
-		// Setup the speed explicitly, if given
-		sprintf(baud_command, "AT+IPR=%d\r\n", baudrate);
-	}
-
-	at_command(serial_fd, baud_command, 10000);
-	at_command(serial_fd,"AT\r\n", 10000);
-	at_command(serial_fd,"AT&S0\\Q3\r\n", 10000);
-
-	if (!at_command(serial_fd,"AT\r\n", 10000))
-	{
-		if(_debug)
-			syslog(LOG_DEBUG, "ERROR AT %d\r\n", __LINE__);
-
-		syslog(LOG_INFO, "Modem does not respond to AT commands, trying close MUX mode");
-		write_frame(0, (char *)close_mux, 2, UIH);
-		at_command(serial_fd,"AT\r\n", 10000);
-	}
-	if (pin_code > 0 && pin_code < 10000) 
-	{
-		// Some modems, such as webbox, will sometimes hang if SIM code
-		// is given in virtual channel
-		char pin_command[20];
-		sprintf(pin_command, "AT+CPIN=%d\r\n", pin_code);
-		if (!at_command(serial_fd,pin_command, 20000))
-		{
-			if(_debug)
-				syslog(LOG_DEBUG, "ERROR AT+CPIN %d\r\n", __LINE__);
-		}
-	}
-
-	if (!at_command(serial_fd, mux_command, 10000))
-	{
-		syslog(LOG_ERR, "MUX mode doesn't function.\n");
-		return -1;
-	}
-	return 0;
 }
 
 /**
@@ -1386,7 +905,7 @@ int initGeneric()
 	char mux_command[20] = "AT+CMUX=0\r\n";
 	unsigned char close_mux[2] = { C_CLD | CR, 1 };
 
-	int baud = indexOfBaud(baudrate);
+	int baud = index_of_baud(baudrate);
 	if (baud != 0) {
 		// Setup the speed explicitly, if given
 		sprintf(mux_command, "AT+CMUX=0,0,%d\r\n", baud);
@@ -1434,7 +953,6 @@ int openDevicesAndMuxMode() {
 	maxfd = 0;
 	for (i = 0; i < numOfPorts; i++)
 	{
-		remaining[i] = 0;
 		if ((ussp_fd[i] = open_pty(ptydev[i], i)) < 0)
 		{
 			syslog(LOG_ERR,"Can't open %s. %s (%d).\n", ptydev[i], strerror(errno), errno);
@@ -1458,22 +976,8 @@ int openDevicesAndMuxMode() {
 		maxfd = serial_fd;
 	syslog(LOG_INFO,"Opened serial port. Switching to mux-mode.\n");
 
-	switch(_modem_type)
-	{
-		case MC35:
-			//we coould have other models like XP48 TC45/35
-			ret = initSiemensMC35();
-			break;
-		case IRZ52IT:
-			//we coould have other models like XP48 TC45/35
-			ret = initIRZ52IT();
-			break;
-		case GENERIC:
-			ret = initGeneric();
-			break;
-			// case default:
-			// syslog(LOG_ERR, "OOPS Strange modem\n");
-	}
+
+	ret = initGeneric();
 
 	if (ret != 0) {
 		return ret;
@@ -1533,27 +1037,13 @@ void closeDevices()
  */
 int main(int argc, char *argv[], char *env[])
 {
-#if 0
-	int tmp_i;
-	for (tmp_i = 0; tmp_i < argc; tmp_i++) {
-		fprintf(stderr, "argv[%d]: %s\t", tmp_i, argv[tmp_i]);
-		fprintf(stderr, "env[%d]: %s\n", tmp_i, env[tmp_i]);
-	}
-	argc = 5;
-	argv[0] = "./gsmMuxd";
-	argv[1] = "-s";
-	argv[2] = "/dev/mux";
-	argv[3] = "/dev/ptmx";
-	argv[4] = "/dev/ptmx";
-
-#endif
 #define PING_TEST_LEN 6
 	static char ping_test[] = "\x23\x09PING";
 	//struct sigaction sa;
 	int sel, len;
 	fd_set rfds;
 	struct timeval timeout;
-	unsigned char buf[4096], **tmp;
+	unsigned char buf[4096];
 	char *programName;
 	int i, size,t;
 
@@ -1568,10 +1058,8 @@ int main(int argc, char *argv[], char *env[])
 	programName = argv[0];
 	/*************************************/
 
-	_modem_type = GENERIC;
-
         _debug = 1;
-	serportdev="/dev/ttyUSB0";
+	serportdev="/dev/ttyUSB1";
 	baudrate = 115200;
 
 	while((opt=getopt(argc,argv,"p:f:h?dwrm:b:P:s:"))>0) {
@@ -1587,15 +1075,6 @@ int main(int argc, char *argv[], char *env[])
 			_debug = 1;
 			break;
 		case 'm':
-			if(!strcmp(optarg,"mc35"))
-				_modem_type = MC35;
-			else if(!strcmp(optarg,"mc75"))
-				_modem_type = MC35;
-			else if(!strcmp(optarg,"irz52it"))
-				_modem_type = IRZ52IT;
-			else if(!strcmp(optarg,"generic"))
-				_modem_type = GENERIC;
-			else _modem_type = UNKNOW_MODEM;
 			break;
 		case 'b':
 			baudrate = atoi(optarg);
@@ -1654,14 +1133,11 @@ int main(int argc, char *argv[], char *env[])
 	}
 	
 	numOfPorts = t-optind;
-	//fprintf(stderr, "optind:%d\nnumOfports:%d\n", optind, numOfPorts);
 
 	syslog(LOG_INFO,"Malloc buffers...\n");
 	// allocate memory for data structures
 	if (!(ussp_fd = malloc(sizeof(int) * numOfPorts))
 			|| !(in_buf = gsm0710_buffer_init())
-			|| !(remaining = malloc(sizeof(int) * numOfPorts))
-			|| !(tmp = malloc(sizeof(char *) * numOfPorts))
 			|| !(cstatus = malloc(sizeof(Channel_Status) * (1 + numOfPorts))))
 	{
 		syslog(LOG_ALERT,"Out of memory\n");
@@ -1694,33 +1170,28 @@ int main(int argc, char *argv[], char *env[])
 
 		timeout.tv_sec = 1;
 		timeout.tv_usec = 0;
-/*XXX*/
-		//write_test_cmd();
 
 		sel = select(maxfd + 1, &rfds, NULL, NULL, &timeout);
 		if (faultTolerant) {
 			// get the current time
 			time(&currentTime);
 		}
-		if (1 || sel > 0) {
+		if (sel > 0) {
 
 			if (FD_ISSET(serial_fd, &rfds)) {
-				// input from serial port
+				/*input from serial port*/
 				if(_debug)
 					syslog(LOG_DEBUG, "Serial Data\n");
 
-				if (((size = gsm0710_buffer_free(in_buf)) > 0) && ((len = read(serial_fd, buf, 100/*min(size, sizeof(buf))*/)) > 0)) {
-				//if (1) {
-				//	size = gsm0710_buffer_free(in_buf);
-				//	len = read(serial_fd, buf, min(size, sizeof(buf)));
-			        //	if ((size > 0) && (len > 0)) {
-						//printf("\nsize : %d\tlen: %d\n\n", size, len);
-			        //	}
-					fprintf(stderr, "\nserial data receive: ");
-					dump((char *)buf, len);
-					printf("\n");
-					gsm0710_buffer_write(in_buf, buf, len);
-					// extract and handle ready frames
+					size = gsm0710_buffer_free(in_buf);
+					len = read(serial_fd, buf, min(size, sizeof(buf)));
+			        	if ((size > 0) && (len > 0)) {
+						fprintf(stderr, "\nserial data receive: ");
+						dump((char *)buf, len);
+						printf("\n");
+						gsm0710_buffer_write(in_buf, buf, len);
+						
+					/*extract and handle ready frames*/
 					if (extract_frames(in_buf) > 0 && faultTolerant) {
 						frameReceiveTime = currentTime;
 						pingNumber = 1;
@@ -1731,45 +1202,24 @@ int main(int argc, char *argv[], char *env[])
 			// check virtual ports
 			for (i = 0; i < numOfPorts; i++) {
 				if (FD_ISSET(ussp_fd[i], &rfds)) {
-					// information from virtual port
-					if (remaining[i] > 0)
-					{
-						memcpy(buf, tmp[i], remaining[i]);
-						free(tmp[i]);
+					if ((len = read(ussp_fd[i], buf, sizeof(buf)) > 0)) {
+						ussp_recv_data((char *)buf, len, i);
 					}
-					if ((len = read(ussp_fd[i], buf + remaining[i], sizeof(buf) - remaining[i])) > 0)
-					//len = 9;
-					//strncpy((char *)buf, "AT+CGMM\r\n", len);
-					//printf("\nAT+CGMM send: ");
-					remaining[i] = ussp_recv_data((char *)buf, len + remaining[i], i);
-#if 0
-					char *buffer = malloc(2048);
-					int length = read(serial_fd, buffer, 2048);
-					printf("\nread buffer: ");
 
-					dump(buffer, length);
-#endif
-					if(_debug)
+					if(_debug) {
 						fprintf(stderr, "\nData from ptya%d: %d bytes\n",i,len);
-					if(len<0)
-					{
+					}
+
+					if(len<0) {
 						// Re-open pty, so that in 
-						remaining[i] = 0;
 						close(ussp_fd[i]);
 						if ((ussp_fd[i] = open_pty(ptydev[i], i)) < 0) {
 							if(_debug)
 								syslog(LOG_DEBUG,"Can't re-open %s. %s (%d).\n", ptydev[i], strerror(errno), errno);
 							terminate=1;
-						}
-						else if (ussp_fd[i] > maxfd)
+						} else if (ussp_fd[i] > maxfd) {
 							maxfd = ussp_fd[i];
-					}
-
-					/* copy remaining bytes from last packet into tmp */
-					if (remaining[i] > 0)
-					{
-						tmp[i] = malloc(remaining[i]);
-						memcpy(tmp[i], buf + sizeof(buf) - remaining[i], remaining[i]);
+						}
 					}
 				}
 			}
@@ -1802,8 +1252,7 @@ int main(int argc, char *argv[], char *env[])
 					// Modem has closed down the multiplexer mode
 					restart = 0;
 					syslog(LOG_INFO, "Trying to restart the mux.\n");
-				}
-				do {
+				} do {
 					closeDevices();
 					terminateCount = -1;
 					sleep(1);
@@ -1813,6 +1262,7 @@ int main(int argc, char *argv[], char *env[])
 						pingNumber = 1;
 						break;
 					}
+
 					sleep(POLLING_INTERVAL);
 				} while (!terminate);
 
@@ -1827,14 +1277,12 @@ int main(int argc, char *argv[], char *env[])
 			}
 		}
 
-	}                           /* while */
+	}
 
 	// finalize everything
 	closeDevices();
 
 	free(ussp_fd);
-	free(tmp);
-	free(remaining);
 	syslog(LOG_INFO,"Received %ld frames and dropped %ld received frames during the mux-mode.\n", in_buf->received_count,
 			in_buf->dropped_count);
 	gsm0710_buffer_destroy(in_buf);
