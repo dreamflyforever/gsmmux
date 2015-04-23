@@ -66,10 +66,11 @@
 #include <config.h>
 #endif
 
+/*To get ptsname grandpt and unlockpt definitions from stdlib.h*/
 #ifndef _GNU_SOURCE
-// To get ptsname grandpt and unlockpt definitions from stdlib.h
 #define _GNU_SOURCE
 #endif
+
 #include <features.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -385,8 +386,6 @@ int at_command(int fd, char *cmd, int to)
 
 	tcdrain(fd);
 	sleep(1);
-	//memset(buf, 0, sizeof(buf));
-	//len = read(fd, buf, sizeof(buf));
 
 	for (i = 0; i < 100; i++) {
 
@@ -424,7 +423,7 @@ char *createSymlinkName(int idx)
 	if (devSymlinkPrefix == NULL) {
 		return NULL;
 	}
-	char* symLinkName  = malloc(strlen(devSymlinkPrefix)+255);
+	char* symLinkName  = malloc(strlen(devSymlinkPrefix) + 255);
 	sprintf(symLinkName, "%s%d", devSymlinkPrefix, idx);
 	return symLinkName;
 }
@@ -438,19 +437,19 @@ int open_pty(char* devname, int idx)
 		if (symLinkName) {
 			char* ptsSlaveName = ptsname(fd);	  
 
-			// Create symbolic device name, e.g. /dev/mux0
+			/*Create symbolic device name, e.g. /dev/mux0*/
 			unlink(symLinkName);
 			if (symlink(ptsSlaveName, symLinkName) != 0) {
 				syslog(LOG_ERR,"Can't create symbolic link %s -> %s. %s (%d).\n", symLinkName, ptsSlaveName, strerror(errno), errno);
 			}
 		}
-		// get the parameters
+		/*get the parameters*/
 		tcgetattr(fd, &options);
-		// set raw input
+		/*set raw input*/
 		options.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
 		options.c_iflag &= ~(INLCR | ICRNL | IGNCR);
 
-		// set raw output
+		/*set raw output*/
 		options.c_oflag &= ~OPOST;
 		options.c_oflag &= ~OLCUC;
 		options.c_oflag &= ~ONLRET;
@@ -459,7 +458,7 @@ int open_pty(char* devname, int idx)
 		tcsetattr(fd, TCSANOW, &options);
 
 		if (strcmp(devname, "/dev/ptmx") == 0) {
-			// Otherwise programs cannot access the pseudo terminals
+			/*Otherwise programs cannot access the pseudo terminals*/
 			grantpt(fd);
 			unlockpt(fd);
 		}
@@ -494,16 +493,16 @@ void setAdvancedOptions(int fd, speed_t baud)
 
 	fcntl(fd, F_SETFL, 0);
 
-	// get the parameters
+	/*get the parameters*/
 	tcgetattr(fd, &options);
 
-	// Do like minicom: set 0 in speed options
+	/*Do like minicom: set 0 in speed options*/
 	cfsetispeed(&options, 0);
 	cfsetospeed(&options, 0);
 
 	options.c_iflag = IGNBRK;
 
-	// Enable the receiver and set local mode and 8N1
+	/*Enable the receiver and set local mode and 8N1*/
 	options.c_cflag = (CLOCAL | CREAD | CS8 | HUPCL);
 	// Set speed
 	options.c_cflag |= baud;
@@ -553,10 +552,7 @@ int open_serialport(char *dev)
 	
 	if (fd <= 0) {
 		printf("COM open error: %d\n", fd);
-	}
-
-	if (fd != -1)
-	{
+	} else {
 		int index = index_of_baud(baudrate);
 		if(_debug)
 			syslog(LOG_DEBUG, "serial opened\n" );
@@ -581,9 +577,6 @@ int open_serialport(char *dev)
 			options.c_cflag &= ~CSIZE;
 			options.c_cflag |= CS8;
 
-			// enable hardware flow control (CNEW_RTCCTS)
-			// options.c_cflag |= CRTSCTS;
-
 			// set raw input
 			options.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
 			options.c_iflag &= ~(INLCR | ICRNL | IGNCR);
@@ -599,56 +592,54 @@ int open_serialport(char *dev)
 			tcsetattr(fd, TCSANOW, &options);
 		}
 	}
+
 	return fd;
 }
 
 // Prints information on a frame
 void print_frame(GSM0710_Frame * frame)
 {
-	if(_debug)
-	{
+	if(_debug) {
 		syslog(LOG_DEBUG, "is in %s\n" , __FUNCTION__);
 		syslog(LOG_DEBUG,"Received ");
 	}
 
-	switch((frame->control & ~PF))
-	{
-		case SABM:
-			if(_debug)
-				syslog(LOG_DEBUG,"SABM ");
-			break;
-		case UIH:
-			if(_debug)
-				syslog(LOG_DEBUG,"UIH ");
-			break;
-		case UA:
-			if(_debug)
-				syslog(LOG_DEBUG,"UA ");
-			break;
-		case DM:
-			if(_debug)
-				syslog(LOG_DEBUG,"DM ");
-			break;
-		case DISC:
-			if(_debug)
-				syslog(LOG_DEBUG,"DISC ");
-			break;
-		case UI:
-			if(_debug)
-				syslog(LOG_DEBUG,"UI ");
-			break;
-		default:
-			if(_debug)
-				syslog(LOG_DEBUG,"unkown (control=%d) ", frame->control);
-			break;
+	switch((frame->control & ~PF)) {
+	case SABM:
+		if(_debug)
+			syslog(LOG_DEBUG,"SABM ");
+		break;
+	case UIH:
+		if(_debug)
+			syslog(LOG_DEBUG,"UIH ");
+		break;
+	case UA:
+		if(_debug)
+			syslog(LOG_DEBUG,"UA ");
+		break;
+	case DM:
+		if(_debug)
+			syslog(LOG_DEBUG,"DM ");
+		break;
+	case DISC:
+		if(_debug)
+			syslog(LOG_DEBUG,"DISC ");
+		break;
+	case UI:
+		if(_debug)
+			syslog(LOG_DEBUG,"UI ");
+		break;
+	default:
+		if(_debug)
+			syslog(LOG_DEBUG,"unkown (control=%d) ", frame->control);
+		break;
 	}
+	
 	if(_debug)
 		syslog(LOG_DEBUG," frame for channel %d.\n", frame->channel);
 
-	if (frame->data_length > 0)
-	{
-		if(_debug)
-		{
+	if (frame->data_length > 0) {
+		if(_debug) {
 			syslog(LOG_DEBUG,"frame->data = %s / size = %d\n",frame->data, frame->data_length);
 			syslog(LOG_DEBUG,"\n");
 		}
@@ -687,7 +678,6 @@ int extract_frames(GSM0710_Buffer * buf)
 	int framesExtracted = 0;
 
 	GSM0710_Frame *frame;
-	_debug = 1;
 	if(_debug)
 		syslog(LOG_DEBUG, "is in %s\n" , __FUNCTION__);
 	while ((frame = gsm0710_buffer_get_frame(buf)))	{
@@ -709,9 +699,7 @@ int extract_frames(GSM0710_Buffer * buf)
 				if(_debug)
 					syslog(LOG_DEBUG,"control channel command\n");
 			}
-		}
-		else
-		{
+		} else {
 			// not an information frame
 			if(_debug)
 				syslog(LOG_DEBUG,"not an information frame\n");
@@ -722,34 +710,28 @@ int extract_frames(GSM0710_Buffer * buf)
 			case UA:
 				if(_debug)
 					syslog(LOG_DEBUG,"is FRAME_IS(UA, frame)\n");
-				if (cstatus[frame->channel].opened == 1)
-				{
+				if (cstatus[frame->channel].opened == 1) {
 					syslog(LOG_INFO,"Logical channel %d closed.\n", frame->channel);
 					cstatus[frame->channel].opened = 0;
-				}
-				else
-				{
+				} else {
 					cstatus[frame->channel].opened = 1;
-					if (frame->channel == 0)
-					{
+					if (frame->channel == 0) {
 						syslog(LOG_INFO,"Control channel opened.\n");
 						// send version Siemens version test
 						write_frame(0, version_test, 18, UIH);
 					}
-					else
-					{
+					else {
 						syslog(LOG_INFO,"Logical channel %d opened.\n", frame->channel);
 					}
 				}
+
 				break;
 			case DM:
-				if (cstatus[frame->channel].opened)
-				{
+				if (cstatus[frame->channel].opened) {
 					syslog(LOG_INFO,"DM received, so the channel %d was already closed.\n", frame->channel);
 					cstatus[frame->channel].opened = 0;
 				}
-				else
-				{
+				else {
 					if (frame->channel == 0)
 					{
 						syslog(LOG_INFO,"Couldn't open control channel.\n->Terminating.\n");
@@ -776,14 +758,10 @@ int extract_frames(GSM0710_Buffer * buf)
 							terminate = 1;
 							terminateCount = -1;    // don't need to close channels
 						}
-					}
-					else
-					{
+					} else {
 						syslog(LOG_INFO,"Logical channel %d closed.\n", frame->channel);
 					}
-				}
-				else
-				{
+				} else {
 					// channel already closed
 					syslog(LOG_INFO,"Received DISC even though channel %d was already closed.\n", frame->channel);
 					write_frame(frame->channel, NULL, 0, DM | PF);
@@ -791,19 +769,13 @@ int extract_frames(GSM0710_Buffer * buf)
 				break;
 			case SABM:
 				// channel open request
-				if (cstatus[frame->channel].opened == 0)
-				{
-					if (frame->channel == 0)
-					{
+				if (cstatus[frame->channel].opened == 0) {
+					if (frame->channel == 0) {
 						syslog(LOG_INFO,"Control channel opened.\n");
-					}
-					else
-					{
+					} else {
 						syslog(LOG_INFO,"Logical channel %d opened.\n", frame->channel);
 					}
-				}
-				else
-				{
+				} else {
 					// channel already opened
 					syslog(LOG_INFO,"Received SABM even though channel %d was already closed.\n", frame->channel);
 				}
@@ -822,7 +794,8 @@ int extract_frames(GSM0710_Buffer * buf)
 
 /** Wait for child process to kill the parent.
  */
-void parent_signal_treatment(int param) {
+void parent_signal_treatment(int param)
+{
 	fprintf(stderr, "MUX started\n");
 	exit(0);
 }
@@ -832,13 +805,12 @@ void parent_signal_treatment(int param) {
  */
 int daemonize(int _debug)
 {
-	if(!_debug)
-	{
+	if(!_debug) {
 		signal(SIGHUP, parent_signal_treatment);
 		if((the_pid=fork()) < 0) {
 			wait_for_daemon_status = 0;
 			return(-1);
-		} else
+		} else {
 			if(the_pid!=0) {
 				if (wait_for_daemon_status) {
 					wait(NULL);
@@ -847,6 +819,7 @@ int daemonize(int _debug)
 				} 
 				exit(0);//parent goes bye-bye
 			}
+		}
 		/*child continues become session leader*/
 		setsid(); 
 		if(wait_for_daemon_status == 0 && (the_pid = fork()) != 0)
@@ -937,8 +910,7 @@ int initGeneric()
 		}
 	}
 
-	if (!at_command(serial_fd, mux_command, 10000))
-	{
+	if (!at_command(serial_fd, mux_command, 10000)) {
 		syslog(LOG_ERR, "MUX mode doesn't function.\n");
 		return -1;
 	}
@@ -951,15 +923,13 @@ int openDevicesAndMuxMode() {
 	syslog(LOG_INFO,"Open devices...\n");
 	// open ussp devices
 	maxfd = 0;
-	for (i = 0; i < numOfPorts; i++)
-	{
-		if ((ussp_fd[i] = open_pty(ptydev[i], i)) < 0)
-		{
+	for (i = 0; i < numOfPorts; i++) {
+		if ((ussp_fd[i] = open_pty(ptydev[i], i)) < 0) {
 			syslog(LOG_ERR,"Can't open %s. %s (%d).\n", ptydev[i], strerror(errno), errno);
 			return -1;
-		} 
-		else if (ussp_fd[i] > maxfd)
+		}  else if (ussp_fd[i] > maxfd) {
 			maxfd = ussp_fd[i];
+		}
 		cstatus[i].opened = 0;
 		cstatus[i].v24_signals = S_DV | S_RTR | S_RTC | EA;
 	}
@@ -967,22 +937,19 @@ int openDevicesAndMuxMode() {
 	syslog(LOG_INFO,"Open serial port...\n");
 
 	// open the serial port
-	if ((serial_fd = open_serialport(serportdev)) < 0)
-	{
+	if ((serial_fd = open_serialport(serportdev)) < 0) {
 		syslog(LOG_ALERT,"Can't open %s. %s (%d).\n", serportdev, strerror(errno), errno);
 		return -1;
-	}
-	else if (serial_fd > maxfd)
+	} else if (serial_fd > maxfd) {
 		maxfd = serial_fd;
+	}
 	syslog(LOG_INFO,"Opened serial port. Switching to mux-mode.\n");
-
 
 	ret = initGeneric();
 
 	if (ret != 0) {
 		return ret;
 	}
-	//End Modem Init
 
 	terminateCount = numOfPorts;
 	syslog(LOG_INFO, "Waiting for mux-mode.\n");
@@ -1125,8 +1092,7 @@ int main(int argc, char *argv[], char *env[])
 		_priority = LOG_INFO;
 	}
 
-	for (t=optind; t<argc; t++)
-	{
+	for (t=optind; t<argc; t++) {
 		if((t-optind)>=MAX_CHANNELS) break;
 		syslog(LOG_INFO, "Port %d : %s\n",t-optind,argv[t]);
 		ptydev[t-optind]=argv[t];
